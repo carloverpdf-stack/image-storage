@@ -53,7 +53,7 @@ async function loadImages() {
 
                     <button
                         class="delete-button"
-                        onclick="deleteImage('${image.name}')"
+                        onclick="deleteImage('${image.url}')"
                     >
                         Delete
                     </button>
@@ -148,7 +148,7 @@ uploadButton.addEventListener(
 // DELETE IMAGE
 // ==============================
 
-async function deleteImage(filename) {
+async function deleteImage(url) {
 
     if (!confirm("Delete this image?")) {
         return;
@@ -156,16 +156,25 @@ async function deleteImage(filename) {
 
     try {
 
-        const response =
-            await fetch(
-                `/api/images/${encodeURIComponent(filename)}`,
-                {
-                    method: "DELETE"
-                }
-            );
+        const response = await fetch(
+            "/api/images",
+            {
+                method: "DELETE",
+
+                headers: {
+                    "Content-Type": "application/json"
+                },
+
+                body: JSON.stringify({
+                    url: url
+                })
+            }
+        );
+
 
         const result =
             await response.json();
+
 
         if (!response.ok) {
 
@@ -174,6 +183,7 @@ async function deleteImage(filename) {
             );
 
         }
+
 
         loadImages();
 

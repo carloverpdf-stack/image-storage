@@ -1,144 +1,233 @@
 const express = require("express");
 const multer = require("multer");
 const path = require("path");
-const fs = require("fs");
+
+const { put, list, del } = require("@vercel/blob");
 
 const app = express();
-const PORT = 3000;
 
-// Location where uploaded images will be stored
-const uploadFolder = path.join(__dirname, "uploads");
+const PORT = process.env.PORT || 3000;
 
-// Make sure uploads folder exists
-if (!fs.existsSync(uploadFolder)) {
-    fs.mkdirSync(uploadFolder);
-}
 
-// Configure where uploaded files go
-const storage = multer.diskStorage({
-    destination: function (req, file, cb) {
-        cb(null, uploadFolder);
+// ======================================
+// MULTER
+// Store uploaded file in memory
+// ======================================
+
+const upload = multer({
+    storage: multer.memoryStorage(),
+
+    limits: {
+        // Vercel Functions have a 4.5 MB request-body limit
+        fileSize: 4 * 1024 * 1024
     },
 
-    filename: function (req, file, cb) {
-        const extension = path.extname(file.originalname);
+    fileFilter: function (req, file, cb) {
 
-        const filename =
-            Date.now() + extension;
+        const allowedTypes = [
+            "image/jpeg",
+            "image/png",
+            "image/gif",
+            "image/webp"
+        ];
 
-        cb(null, filename);
+        if (allowedTypes.includes(file.mimetype)) {
+            cb(null, true);
+        } else {
+            cb(new Error("Only image files are allowed"));
+        }
+
     }
 });
 
-const upload = multer({
-    storage: storage
-});
 
-// Serve the website
-app.use(express.static(path.join(__dirname, "public")));
+// ======================================
+// SERVE WEBSITE
+// ======================================
 
-// Make uploaded images accessible
-app.use("/uploads", express.static(uploadFolder));
+app.use(express.static(
+    path.join(__dirname, "public")
+));
 
 
-// ==============================
+// ======================================
 // GET ALL IMAGES
-// ==============================
+// ======================================
 
-app.get("/api/images", (req, res) => {
+app.get("/api/images", async (req, res) => {
 
-    fs.readdir(uploadFolder, (err, files) => {
+    try {
 
-        if (err) {
-            return res.status(500).json({
-                error: "Could not read images"
-            });
-        }
+        const result = await list();
 
-        const images = files.map(file => ({
-            name: file,
-            url: `/uploads/${file}`
-        }));
+        const images = result.blobs.map(blob => {
+
+            return {
+                name: blob.pathname,
+                url: blob.url
+            };
+
+        });
 
         res.json(images);
-    });
+
+    } catch (error) {
+
+        console.error(error);
+
+        res.status(500).json({
+            error: "Could not load images"
+        });
+
+    }
 
 });
 
 
-// ==============================
+// ======================================
 // UPLOAD IMAGE
-// ==============================
+// ======================================
 
 app.post(
     "/api/upload",
     upload.single("image"),
-    (req, res) => {
 
-        if (!req.file) {
-            return res.status(400).json({
-                error: "No image selected"
-            });
-        }
+    async (req, res) => {
 
-        res.json({
-            success: true,
-            image: {
-                name: req.file.filename,
-                url: `/uploads/${req.file.filename}`
+        try {
+
+            if (!req.file) {
+
+                return res.status(400).json({
+                    error: "No image selected"
+                });
+
             }
-        });
+
+
+            const extension =
+                path.extname(req.file.originalname);
+
+
+            const filename =
+                `images/${Date.now()}${extension}`;
+
+
+            const blob = await put(
+                filename,
+                req.file.buffer,
+                {
+                    access: "public",
+
+                    contentType:
+                        req.file.mimetype,
+
+                    addRandomSuffix: true
+                }
+            );
+
+
+            res.json({
+
+                success: true,
+
+                image: {
+                    name: blob.pathname,
+                    url: blob.url
+                }
+
+            });
+
+        } catch (error) {
+
+            console.error(error);
+
+            res.status(500).json({
+                error: "Upload failed"
+            });
+
+        }
 
     }
 );
 
 
-// ==============================
+// ======================================
 // DELETE IMAGE
-// ==============================
+// ======================================
 
-app.delete("/api/images/:filename", (req, res) => {
+app.delete(
+    "/api/images",
+    express.json(),
 
-    const filename = path.basename(req.params.filename);
+    async (req, res) => {
 
-    const filePath =
-        path.join(uploadFolder, filename);
+        try {
 
-    if (!fs.existsSync(filePath)) {
+            const { url } = req.body;
 
-        return res.status(404).json({
-            error: "Image not found"
-        });
 
-    }
+            if (!url) {
 
-    fs.unlink(filePath, (err) => {
+                return res.status(400).json({
+                    error: "Image URL is required"
+                });
 
-        if (err) {
+            }
 
-            return res.status(500).json({
+
+            await del(url);
+
+
+            res.json({
+                success: true
+            });
+
+        } catch (error) {
+
+            console.error(error);
+
+            res.status(500).json({
                 error: "Could not delete image"
             });
 
         }
 
-        res.json({
-            success: true
+    }
+);
+
+
+// ======================================
+// ERROR HANDLER
+// ======================================
+
+app.use((error, req, res, next) => {
+
+    console.error(error);
+
+    if (error.code === "LIMIT_FILE_SIZE") {
+
+        return res.status(400).json({
+            error: "Image must be smaller than 4 MB"
         });
 
+    }
+
+    res.status(500).json({
+        error: error.message || "Something went wrong"
     });
 
 });
 
 
-// ==============================
+// ======================================
 // START SERVER
-// ==============================
+// ======================================
 
 app.listen(PORT, () => {
 
     console.log(
-        `Server running at http://localhost:${PORT}`
+        `Server running on port ${PORT}`
     );
 
 });
